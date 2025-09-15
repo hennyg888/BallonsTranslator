@@ -699,7 +699,9 @@ class SceneTextManager(QObject):
                 old_html_lst.append(blkitem.toHtml())
                 old_rect_lst.append(blkitem.absBoundingRect(qrect=True))
                 trans_widget_lst.append(self.pairwidget_list[blkitem.idx].e_trans)
-                self.layout_textblk(blkitem)
+                #TODO add text and other info here for autoformat right click cmd
+                ##needs more parameters passed so reformat will fill current text box size with text
+                self.layout_textblk(blkitem, text=blkitem.blk.translation)
 
             self.canvas.push_undo_command(AutoLayoutCommand(selected_blks, old_rect_lst, old_html_lst, trans_widget_lst))
 
@@ -722,11 +724,134 @@ class SceneTextManager(QObject):
             else:
                 self.formatpanel.set_textblk_item(multi_select=bool(textitems))
 
+    def layout_textblk_iterative(self, blkitem: TextBlkItem, text: str, bounding_rect: List, font: QFont):
+        """
+        Iterative layout that resizes text once to fit and fill the bounding rectangle.
+        Breaks long words and wraps lines to match the bounding rect shape.
+        """
+        max_iterations = 10
+        convergence_threshold = 0.01
+        
+        # Start with current font size
+        current_font_size = font.pointSizeF()
+        bounding_width = bounding_rect[2]
+        bounding_height = bounding_rect[3]
+        
+        print(f"Starting iterative layout: bounding_rect={bounding_rect}, initial_font_size={current_font_size}")
+        
+        for iteration in range(max_iterations):
+            # Step 1: Format text with current font size
+            font.setPointSizeF(current_font_size)
+            formatted_text, text_width, text_height = self._format_text_to_fit(
+                text, font, bounding_width, bounding_height
+            )
+            
+            # Step 2: Calculate resize ratios
+            width_ratio = bounding_width / text_width if text_width > 0 else 1.0
+            height_ratio = bounding_height / text_height if text_height > 0 else 1.0
+            
+            # Step 3: Determine new font size (don't upscale beyond original)
+            resize_ratio = min(width_ratio, height_ratio, 1.0)
+            new_font_size = current_font_size * resize_ratio
+            
+            print(f"Iteration {iteration + 1}: text_size=({text_width:.1f}, {text_height:.1f}), "
+                  f"ratios=({width_ratio:.3f}, {height_ratio:.3f}), "
+                  f"resize_ratio={resize_ratio:.3f}, font_size={new_font_size:.1f}")
+            
+            # Step 4: Check convergence
+            font_size_change = abs(new_font_size - current_font_size) / current_font_size
+            if font_size_change < convergence_threshold:
+                print(f"Converged after {iteration + 1} iterations")
+                break
+                
+            current_font_size = new_font_size
+        
+        # Apply final formatting
+        font.setPointSizeF(current_font_size)
+        final_text, final_width, final_height = self._format_text_to_fit(
+            text, font, bounding_width, bounding_height
+        )
+        
+        print(f"Final result: text_size=({final_width:.1f}, {final_height:.1f}), font_size={current_font_size:.1f}")
+        return final_text, current_font_size
+    
+    def _format_text_to_fit(self, text: str, font: QFont, max_width: float, max_height: float):
+        """
+        Format text to fit within the given dimensions by breaking long words and wrapping lines.
+        """
+        fm = QFontMetricsF(font)
+        line_height = fm.height()
+        
+        # Break long words first
+        words = text.split()
+        broken_words = []
+        for word in words:
+            if fm.horizontalAdvance(word) > max_width:
+                # Break word into chunks that fit
+                chunks = self._break_word_to_fit(word, fm, max_width)
+                broken_words.extend(chunks)
+            else:
+                broken_words.append(word)
+        
+        # Wrap lines to fit width
+        lines = []
+        current_line = ""
+        for word in broken_words:
+            test_line = (current_line + " " + word).strip()
+            if fm.horizontalAdvance(test_line) <= max_width:
+                current_line = test_line
+            else:
+                if current_line:
+                    lines.append(current_line)
+                current_line = word
+        
+        if current_line:
+            lines.append(current_line)
+        
+        # Join lines with newlines
+        formatted_text = "\n".join(lines)
+        
+        # Calculate dimensions
+        text_width = max(fm.horizontalAdvance(line) for line in lines) if lines else 0
+        text_height = len(lines) * line_height
+        
+        return formatted_text, text_width, text_height
+    
+    def _break_word_to_fit(self, word: str, font_metrics: QFontMetricsF, max_width: float):
+        """
+        Break a word into chunks that fit within max_width.
+        """
+        if font_metrics.horizontalAdvance(word) <= max_width:
+            return [word]
+        
+        chunks = []
+        current_chunk = ""
+        
+        for char in word:
+            test_chunk = current_chunk + char
+            if font_metrics.horizontalAdvance(test_chunk) <= max_width:
+                current_chunk = test_chunk
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk + "-")
+                    current_chunk = char
+                else:
+                    # Single character is too wide - add it anyway
+                    chunks.append(char)
+                    current_chunk = ""
+        
+        if current_chunk:
+            chunks.append(current_chunk)
+        
+        return chunks
+
     def layout_textblk(self, blkitem: TextBlkItem, text: str = None, mask: np.ndarray = None, bounding_rect: List = None, region_rect: List = None):
         
         '''
         auto text layout, vertical writing is not supported yet.
         '''
+        print(text)
+        #print("region_rect: ", region_rect)
 
         img = self.imgtrans_proj.img_array
         if img is None:
@@ -747,7 +872,6 @@ class SceneTextManager(QObject):
         blk_font = blkitem.font()
         fmt = blkitem.get_fontformat()
         blk_font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, fmt.letter_spacing * 100)
-        text_size_func = lambda text: get_text_size(QFontMetricsF(blk_font), text)
 
         restore_charfmts = False
         if text is None:
@@ -765,6 +889,35 @@ class SceneTextManager(QObject):
                 if len(self.pairwidget_list) > blkitem.idx:
                     self.pairwidget_list[blkitem.idx].e_trans.setPlainText(text)
                 return
+        
+        print("bounding_rect: ", bounding_rect)
+        
+        # Use iterative layout for single-resize text that fits and fills bounding rect
+        if self.auto_textlayout_flag and pcfg.let_fntsize_flag == 0 and pcfg.let_autolayout_flag:
+            # Use the new iterative approach
+            final_text, final_font_size = self.layout_textblk_iterative(blkitem, text, bounding_rect, blk_font)
+            
+            # Apply the final font size and text
+            blkitem.textCursor().clearSelection()
+            blkitem.setFontSize(final_font_size)
+            blk_font.setPointSizeF(final_font_size)
+            
+            # Set the formatted text
+            blkitem.setPlainText(final_text)
+            if len(self.pairwidget_list) > blkitem.idx:
+                self.pairwidget_list[blkitem.idx].e_trans.setPlainText(final_text)
+            
+            if restore_charfmts:
+                self.restore_charfmts(blkitem, text, final_text, blkitem.get_char_fmts())
+            
+            blkitem.squeezeBoundingRect()
+            return True
+        
+        # Fallback to original layout logic if auto layout is disabled
+        # (Keep the original complex logic as fallback)
+        text_size_func = lambda text: get_text_size(QFontMetricsF(blk_font), text)
+        
+        if mask is None:
             if tgt_is_cjk:
                 max_enlarge_ratio = 2.5
             else:
@@ -795,6 +948,8 @@ class SceneTextManager(QObject):
         resize_ratio = 1
         if self.auto_textlayout_flag and pcfg.let_fntsize_flag == 0 and pcfg.let_autolayout_flag:
             if blkitem.blk.src_is_vertical and blkitem.blk.vertical != blkitem.blk.src_is_vertical:
+                ##autolayout resizing done here
+                ##TODO make resize ratio fit bounding box
                 adaptive_fntsize = True
                 area_ratio = ballon_area / text_area
                 ballon_area_thresh = 1.7
@@ -815,6 +970,8 @@ class SceneTextManager(QObject):
                     resize_ratio_src = src_width / (sum(wl_list) + max((len(wl_list) - 1 - len(blkitem.blk.lines_array())), 0) * delimiter_len)
                     resize_ratio = max(resize_ratio_src * 1.5, 0.5)
                 resize_ratio = min(max(resize_ratio, 0.6), 1)
+
+        print("resize ratio: ", resize_ratio)
 
         if resize_ratio != 1:
             new_font_size = blk_font.pointSizeF() * resize_ratio   
@@ -842,6 +999,7 @@ class SceneTextManager(QObject):
                 centroid[0] = int(abs_centroid[0] - mask_xyxy[0])
                 centroid[1] = int(abs_centroid[1] - mask_xyxy[1])
 
+        ##handles adding in new line chars
         new_text, xywh, start_from_top, adjust_xy = layout_text(
             blkitem.blk,
             mask, 
@@ -867,11 +1025,14 @@ class SceneTextManager(QObject):
             post_resize_ratio = np.clip(max(region_rect[2] / w, downscale_constraint), 0, 1)
             resize_ratio *= post_resize_ratio
 
+        print("post_resize_ratio: ", post_resize_ratio)
         if post_resize_ratio != 1:
             cx, cy = xywh[0] + xywh[2] / 2, xywh[1] + xywh[3] / 2
             w, h = xywh[2] * post_resize_ratio, xywh[3] * post_resize_ratio
             xywh = [int(cx - w / 2), int(cy - h / 2), int(w), int(h)]
 
+        #somehow same resized ratio calculated above applied again here
+        print("final resize_ratio: ", resize_ratio, "\n")
         if resize_ratio != 1:
             new_font_size = blkitem.font().pointSizeF() * resize_ratio
             blkitem.textCursor().clearSelection()

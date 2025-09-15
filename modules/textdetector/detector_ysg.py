@@ -176,11 +176,12 @@ class YSGYoloDetector(TextDetectorBase):
                             lines = [[line.left + x1, line.top + y1, line.width, line.height] for line in span_list]
                             lines = np.array(lines)
                             font_sz = np.mean(lines[:, 3])
-                        for line in lines:
-                            x1, y1, x2, y2 = line
-                            x2 += x1
-                            y2 += y1
-                            cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
+                        # for line in lines:
+                        #     x1, y1, x2, y2 = line
+                        #     x2 += x1
+                        #     y2 += y1
+                        #     cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
+                        cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
                         lines = xywh2xyxypoly(lines).reshape(-1, 4, 2).tolist()
                         blk = TextBlock(xyxy=xyxy, lines=np.array(lines), src_is_vertical=is_vertical, vertical=is_vertical)
                         blk.font_size = font_sz
@@ -241,7 +242,10 @@ class YSGYoloDetector(TextDetectorBase):
         if ksize > 0:
             element = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * ksize + 1, 2 * ksize + 1),(ksize, ksize))
             mask = cv2.dilate(mask, element)
-            
+        
+        for blk in blk_list:
+            print(blk.xyxy)
+        #bounding_rect in blk_list comes from text detector here
         return mask, blk_list
 
     def updateParam(self, param_key: str, param_content):

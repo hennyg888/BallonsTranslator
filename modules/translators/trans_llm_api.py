@@ -302,7 +302,7 @@ class LLM_API_Translator(BaseTranslator):
             max_tokens = self.max_tokens
 
         for i, query in enumerate(queries):
-            prompt += f"\n<|{i+1-i_offset}|>{query}"
+            prompt += f"\n{i+1-i_offset}.{query}"
             num_src += 1
             if max_tokens * 2 and len("".join(queries[i + 1 :])) > max_tokens:
                 yield prompt.lstrip(), num_src
@@ -568,9 +568,9 @@ class LLM_API_Translator(BaseTranslator):
                     response = self._request_translation(prompt, chat_sample)
                     if not isinstance(response, str):
                         response = str(response)
-                    new_translations = re.split(r"<\|\d+\|>", response)[-num_src:]
+                    new_translations = re.split(r"\d+\.", response)[-num_src:]
                     if len(new_translations) != num_src:
-                        _tr2 = re.sub(r"<\|\d+\|>", "", response).split("\n")
+                        _tr2 = re.sub(r"\d+\.", "", response).split("\n")
                         if len(_tr2) == num_src:
                             new_translations = _tr2
                         else:

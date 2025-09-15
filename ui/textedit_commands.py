@@ -162,6 +162,19 @@ class AutoLayoutCommand(QUndoCommand):
         self.counter = 0
 
     def redo(self):
+        #print("redo autolayout cmd")
+        # for tte in  self.trans_widget_lst:
+        #     print(type(tte))
+        # for rect in self.old_rect_lst:
+        #     print(rect)
+        # for html in self.old_html_lst:
+        #     print(html)
+        # for rect in self.new_rect_lst:
+        #     print(rect)
+        # for html in self.new_html_lst:
+        #     print(html)
+        # for item in self.items:
+        #     print(item)
         self.counter += 1
         if self.counter <= 1:
             return
